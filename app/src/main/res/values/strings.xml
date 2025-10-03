@@ -1,0 +1,4 @@
+<resources>
+        <string name="app_name">InbuiltUSSD</string>
+        <string name="ussd_service_description">USSD Interceptor for banking transactions</string>
+</resources>
