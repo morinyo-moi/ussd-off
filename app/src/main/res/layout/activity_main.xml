@@ -70,6 +70,15 @@
             android:backgroundTint="#4caf50"
             android:textColor="#ffffff" />
 
+        <EditText
+            android:id="@+id/ussdInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Enter USSD input"
+            android:inputType="number" />
+
+
+
     </LinearLayout>
 
     <TextView
@@ -102,12 +111,14 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="💡 USSD runs in background - no dialogs visible to user"
+        android:text="USSD runs in background - no dialogs visible to user"
         android:textSize="12sp"
         android:gravity="center"
         android:padding="10dp"
         android:background="#fff3e0"
         android:textColor="#e65100"
         android:layout_marginTop="10dp" />
+
+
 
 </LinearLayout>

@@ -12,31 +12,28 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
-import android.view.View;
-import android.view.accessibility.AccessibilityManager;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import android.view.accessibility.AccessibilityManager;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
-    private static final String TAG = "USSD_Demo";
+    private static final String TAG = "USSD_Background";
     private static final int REQUEST_CALL_PHONE = 101;
-    private static final int REQUEST_ACCESSIBILITY = 102;
-    private static final int REQUEST_OVERLAY_PERMISSION = 1001;
+    private static final int REQUEST_ACCESSIBILITY = 103;
 
     private Button startUssdButton, sendInputButton;
     private TextView statusText, respTextView;
-    private EditText userInputEditText;
-    private LinearLayout inputContainer;
+    private EditText ussdInputText;
+
     private boolean isUSSDActive = false;
-    private android.os.Handler handler = new android.os.Handler();
+    private String currentSessionId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,183 +42,209 @@ public class MainActivity extends AppCompatActivity {
 
         initializeViews();
         setupUSSDReceiver();
-        checkAccessibilityStatus();
-        checkOverlayPermission();
+        checkPermissions();
 
-        Log.d(TAG, "🚀 MainActivity Started - Nuclear USSD Ready");
+        Log.d(TAG, "🚀 MainActivity Started - USSD Ready");
     }
 
     private void initializeViews() {
         startUssdButton = findViewById(R.id.startUssdButton);
+        sendInputButton = findViewById(R.id.sendInputButton);
         statusText = findViewById(R.id.statusText);
         respTextView = findViewById(R.id.resp);
-        userInputEditText = findViewById(R.id.userInputEditText);
-        sendInputButton = findViewById(R.id.sendInputButton);
-        inputContainer = findViewById(R.id.inputContainer);
+        ussdInputText = findViewById(R.id.ussdInput);
 
-        startUssdButton.setOnClickListener(v -> startUSSDTransaction());
-        sendInputButton.setOnClickListener(v -> sendUserInputToUSSD());
-
-        updateInputControlsVisibility(false);
+        startUssdButton.setOnClickListener(v -> startBackgroundUSSD());
+        sendInputButton.setOnClickListener(v -> sendUserInput());
     }
 
     private void setupUSSDReceiver() {
         BroadcastReceiver ussdReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if ("USSD_RESPONSE".equals(intent.getAction())) {
+                String action = intent.getAction();
+                if ("USSD_BACKGROUND_RESPONSE".equals(action)) {
                     String type = intent.getStringExtra("response_type");
                     String message = intent.getStringExtra("message");
-                    Log.d(TAG, "📨 Received USSD: " + type);
-                    handleUSSDResponse(type, message);
+                    String sessionId = intent.getStringExtra("session_id");
+
+                    Log.d(TAG, "📨 USSD Response: " + type);
+                    handleUSSDResponse(type, message, sessionId);
+                } else if ("USSD_SESSION_END".equals(action)) {
+                    isUSSDActive = false;
+                    updateStatus("USSD Session Ended");
                 }
             }
         };
 
-        LocalBroadcastManager.getInstance(this)
-                .registerReceiver(ussdReceiver, new IntentFilter("USSD_RESPONSE"));
+        IntentFilter filter = new IntentFilter();
+        filter.addAction("USSD_BACKGROUND_RESPONSE");
+        filter.addAction("USSD_SESSION_END");
+        LocalBroadcastManager.getInstance(this).registerReceiver(ussdReceiver, filter);
     }
 
-    private void handleUSSDResponse(String type, String message) {
-        runOnUiThread(() -> {
-            respTextView.setText("📱 " + type + "\n\n" + message);
-
-            switch (type) {
-                case "PIN_PROMPT":
-                case "USSD_CONTENT":
-                    statusText.setText("🔐 PIN Required");
-                    respTextView.append("\n\n💡 Enter your PIN below:");
-                    showInputField("Enter PIN");
-                    isUSSDActive = true;
-                    break;
-
-                case "MAIN_MENU":
-                    statusText.setText("📋 Main Menu");
-                    respTextView.append("\n\n💡 Select option (1, 2, 3, etc.):");
-                    showInputField("Enter option number");
-                    isUSSDActive = true;
-                    break;
-
-                case "WELCOME_SCREEN":
-                    statusText.setText("👋 Welcome Screen");
-                    respTextView.append("\n\n⏳ Continuing automatically...");
-                    isUSSDActive = true;
-                    handler.postDelayed(() -> sendUserInputDirectly("1"), 2000);
-                    break;
-
-                case "SUCCESS":
-                case "SUBMITTED":
-                    statusText.setText("✅ Operation Successful");
-                    respTextView.append("\n\n🎉 USSD completed successfully!");
-                    hideInputField();
-                    isUSSDActive = false;
-                    break;
-
-                case "ERROR":
-                    statusText.setText("❌ Operation Failed");
-                    respTextView.append("\n\n🔧 Please try again");
-                    hideInputField();
-                    isUSSDActive = false;
-                    break;
-
-                default:
-                    statusText.setText("📱 USSD Response");
-                    respTextView.append("\n\n💡 Enter your response:");
-                    showInputField("Enter response");
-                    isUSSDActive = true;
-                    break;
-            }
-        });
-    }
-
-    private void sendUserInputDirectly(String input) {
-        Log.d(TAG, "📤 Direct sending input: " + input);
-        statusText.setText("⌨️ Sending: " + input);
-        respTextView.append("\n\n➡️ Auto-sending: " + input + "\n⏳ Processing...");
-
-        Intent intent = new Intent("SEND_USSD_INPUT");
-        intent.putExtra("user_input", input);
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
-    }
-
-    private void showInputField(String hint) {
-        runOnUiThread(() -> {
-            userInputEditText.setHint(hint);
-            inputContainer.setVisibility(View.VISIBLE);
-            userInputEditText.requestFocus();
-        });
-    }
-
-    private void hideInputField() {
-        runOnUiThread(() -> {
-            inputContainer.setVisibility(View.GONE);
-            userInputEditText.setText("");
-        });
-    }
-
-    private void updateInputControlsVisibility(boolean visible) {
-        runOnUiThread(() -> {
-            inputContainer.setVisibility(visible ? View.VISIBLE : View.GONE);
-        });
-    }
-
-    private void sendUserInputToUSSD() {
-        String userInput = userInputEditText.getText().toString().trim();
-
-        if (userInput.isEmpty()) {
-            Toast.makeText(this, "Please enter input", Toast.LENGTH_SHORT).show();
+    private void checkPermissions() {
+        if (!isAccessibilityServiceEnabled()) {
+            requestAccessibilityPermission();
             return;
         }
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestCallPhonePermission();
+        }
+    }
+
+    private void startBackgroundUSSD() {
+        if (!isAccessibilityServiceEnabled()) {
+            requestAccessibilityPermission();
+            return;
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestCallPhonePermission();
+            return;
+        }
+
+        // Prevent multiple clicks
+        if (isUSSDActive) {
+            Toast.makeText(this, "USSD session already in progress", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        currentSessionId = "ussd_" + System.currentTimeMillis();
+        isUSSDActive = true;
+
+        // Disable button to prevent multiple clicks
+        startUssdButton.setEnabled(false);
+
+        String ussdCode = "*219#";
+
+        updateStatus("🚀 Starting USSD...");
+        respTextView.setText("Session: " + currentSessionId +
+                "\nUSSD: " + ussdCode +
+                "\n\n⚡ USSD dialog will pop up...");
+
+        // Start USSD via Intent to service
+        Intent serviceIntent = new Intent(this, USSDAccessibilityService.class);
+        serviceIntent.setAction("START_USSD");
+        serviceIntent.putExtra("ussd_code", ussdCode);
+        serviceIntent.putExtra("session_id", currentSessionId);
+        startService(serviceIntent);
+    }
+
+
+
+    private void sendUserInput() {
         if (!isUSSDActive) {
             Toast.makeText(this, "No active USSD session", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        Log.d(TAG, "📤 Sending user input to USSD: " + userInput);
-        userInputEditText.setText("");
-        statusText.setText("⌨️ Sending: " + userInput);
-        respTextView.append("\n\n➡️ You entered: " + userInput + "\n⏳ Processing...");
+        String userInput = ussdInputText.getText().toString().trim();
+        if (userInput.isEmpty()) {
+            Toast.makeText(this, "Please enter input", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        Intent intent = new Intent("SEND_USSD_INPUT");
-        intent.putExtra("user_input", userInput);
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
-        hideInputField();
+        // Send input to service
+        Intent serviceIntent = new Intent(this, USSDAccessibilityService.class);
+        serviceIntent.setAction("SEND_INPUT");
+        serviceIntent.putExtra("user_input", userInput);
+        serviceIntent.putExtra("session_id", currentSessionId);
+        startService(serviceIntent);
+
+        ussdInputText.setText("");
+        updateStatus("📤 Sent: " + userInput);
+        respTextView.append("\n\n→ You: " + userInput);
     }
 
-    private void startNuclearOverlay() {
-        try {
-            // Start overlay service for extended period
-            Intent overlayIntent = new Intent(this, OverlayService.class);
-            startService(overlayIntent);
-            Log.d(TAG, "🛡️ Nuclear overlay activated");
-
-            // Keep overlay running for entire USSD session
-            handler.postDelayed(() -> {
-                try {
-                    // Restart overlay to keep it active
-                    startService(new Intent(this, OverlayService.class));
-                } catch (Exception e) {
-                    Log.e(TAG, "❌ Overlay restart failed: " + e.getMessage());
-                }
-            }, 10000); // Restart every 10 seconds
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Nuclear overlay failed: " + e.getMessage());
+    private void handleUSSDResponse(String type, String message, String sessionId) {
+        if (!sessionId.equals(currentSessionId)) {
+            return;
         }
+
+        runOnUiThread(() -> {
+            switch (type) {
+                case "SESSION_STARTED":
+                    updateStatus("🔗 USSD Connected");
+                    respTextView.append("\n\n📞 Dialing USSD...");
+                    break;
+
+                case "WELCOME_SCREEN":
+                    updateStatus("👋 USSD Welcome");
+                    respTextView.append("\n\n📋 " + message);
+                    break;
+
+                case "PIN_PROMPT":
+                    updateStatus("🔐 Enter PIN");
+                    respTextView.append("\n\n🔐 " + message);
+                    // Auto-fill PIN after delay
+                    new android.os.Handler().postDelayed(() -> {
+                        if (isUSSDActive) {
+                            Intent serviceIntent = new Intent(MainActivity.this, USSDAccessibilityService.class);
+                            serviceIntent.setAction("SEND_INPUT");
+                            serviceIntent.putExtra("user_input", "0303");
+                            serviceIntent.putExtra("session_id", currentSessionId);
+                            startService(serviceIntent);
+                            respTextView.append("\n\n→ Auto-filled: 0303");
+                        }
+                    }, 1500);
+                    break;
+
+                case "MENU_OPTIONS":
+                    updateStatus("📋 Menu Options");
+                    respTextView.append("\n\n📋 " + message);
+                    break;
+
+                case "INPUT_REQUIRED":
+                    updateStatus("⌨️ Input Required");
+                    respTextView.append("\n\n❓ " + message);
+                    break;
+
+                case "SUCCESS":
+                    updateStatus("✅ Success");
+                    respTextView.append("\n\n✅ " + message);
+                    endUSSDsession();
+                    break;
+
+                case "ERROR":
+                    updateStatus("❌ Error");
+                    respTextView.append("\n\n❌ " + message);
+                    endUSSDsession();
+                    break;
+
+                case "USSD_RESPONSE":
+                    updateStatus("📨 Response");
+                    respTextView.append("\n\n📨 " + message);
+                    break;
+            }
+        });
     }
 
-    private void checkAccessibilityStatus() {
-        if (isAccessibilityServiceEnabled()) {
-            updateStatus("✅ Nuclear USSD Service Active");
-            respTextView.setText("Nuclear USSD service is ready\n\n" +
-                    "💣 USSD dialogs will be aggressively hidden\n" +
-                    "🛡️ Overlay protection enabled\n" +
-                    "💬 All interaction happens in this app\n" +
-                    "👤 User won't see ANY USSD screens");
-        } else {
-            updateStatus("🔧 Enable Nuclear USSD Service");
-            respTextView.setText("Please enable accessibility service for nuclear USSD operation");
-        }
+    private void endUSSDsession() {
+        isUSSDActive = false;
+        // Re-enable button
+        startUssdButton.setEnabled(true);
+    }
+
+    private void requestAccessibilityPermission() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Enable USSD Service")
+                .setMessage("Please enable accessibility service for USSD operations")
+                .setPositiveButton("Enable", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                    startActivityForResult(intent, REQUEST_ACCESSIBILITY);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void requestCallPhonePermission() {
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.CALL_PHONE},
+                REQUEST_CALL_PHONE);
     }
 
     private boolean isAccessibilityServiceEnabled() {
@@ -239,132 +262,12 @@ public class MainActivity extends AppCompatActivity {
         return false;
     }
 
-    private void startUSSDTransaction() {
-        if (!isAccessibilityServiceEnabled()) {
-            requestAccessibilityPermission();
-            return;
-        }
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestCallPhonePermission();
-        } else {
-            initiateUSSDCall();
-        }
-    }
-
-    private void initiateUSSDCall() {
-        try {
-            String ussdCode = "*219#";
-            String encodedHash = Uri.encode("#");
-            String ussdCodeEncoded = ussdCode.replace("#", encodedHash);
-
-            Log.d(TAG, "📞 Dialing USSD with calm approach: " + ussdCode);
-
-            updateStatus("🚀 Starting Calm USSD...");
-            respTextView.setText("Initiating USSD: " + ussdCode + "\n\n" +
-                    "🕵️ Stealth Mode Activated:\n" +
-                    "• USSD will run in background\n" +
-                    "• No screen flickering\n" +
-                    "• Smooth user experience\n" +
-                    "• Your app stays visible");
-
-            isUSSDActive = true;
-
-            // Start brief overlay (3 seconds only)
-            startBriefOverlay();
-
-            Intent callIntent = new Intent(Intent.ACTION_CALL);
-            callIntent.setData(Uri.parse("tel:" + ussdCodeEncoded));
-            startActivity(callIntent);
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ USSD Error: " + e.getMessage());
-            updateStatus("❌ Error: " + e.getMessage());
-            isUSSDActive = false;
-        }
-    }
-
-    private void startBriefOverlay() {
-        try {
-            Intent overlayIntent = new Intent(this, OverlayService.class);
-            startService(overlayIntent);
-            Log.d(TAG, "🛡️ Brief overlay activated");
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Overlay failed: " + e.getMessage());
-        }
-    }
-
-    private void startOverlayService() {
-        try {
-            Intent intent = new Intent(this, OverlayService.class);
-            startService(intent);
-            Log.d(TAG, "🛡️ Overlay service started");
-
-            handler.postDelayed(() -> {
-                try {
-                    stopService(new Intent(this, OverlayService.class));
-                    Log.d(TAG, "🛡️ Overlay service stopped");
-                } catch (Exception e) {
-                    Log.e(TAG, "❌ Error stopping overlay: " + e.getMessage());
-                }
-            }, 5000);
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Overlay service failed: " + e.getMessage());
-        }
-    }
-
-    private void requestAccessibilityPermission() {
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("Enable Nuclear USSD Service")
-                .setMessage("This app needs Accessibility permission to completely hide USSD dialogs")
-                .setPositiveButton("Enable", (dialog, which) -> {
-                    Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-                    startActivityForResult(intent, REQUEST_ACCESSIBILITY);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void requestCallPhonePermission() {
-        ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.CALL_PHONE},
-                REQUEST_CALL_PHONE);
-    }
-
-    private void checkOverlayPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                new android.app.AlertDialog.Builder(this)
-                        .setTitle("Overlay Permission Required")
-                        .setMessage("This app needs overlay permission to block USSD dialogs from appearing")
-                        .setPositiveButton("Grant Permission", (dialog, which) -> {
-                            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:" + getPackageName()));
-                            startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION);
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
-            }
-        }
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-
         if (requestCode == REQUEST_ACCESSIBILITY) {
             if (isAccessibilityServiceEnabled()) {
-                Toast.makeText(this, "Nuclear USSD service enabled!", Toast.LENGTH_SHORT).show();
-                updateStatus("✅ Nuclear USSD Service Active");
-            }
-        }
-        else if (requestCode == REQUEST_OVERLAY_PERMISSION) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (Settings.canDrawOverlays(this)) {
-                    Toast.makeText(this, "Overlay permission granted!", Toast.LENGTH_SHORT).show();
-                    updateStatus("🛡️ Overlay Protection Active");
-                }
+                Toast.makeText(this, "USSD Service Enabled!", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -374,9 +277,7 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_CALL_PHONE && grantResults.length > 0 &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            initiateUSSDCall();
-        } else {
-            updateStatus("❌ Call permission required");
+            Toast.makeText(this, "Call Permission Granted!", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -385,18 +286,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        checkAccessibilityStatus();
-    }
-
-    @Override
     protected void onDestroy() {
         super.onDestroy();
-        try {
-            stopService(new Intent(this, OverlayService.class));
-        } catch (Exception e) {
-            Log.e(TAG, "Error stopping overlay: " + e.getMessage());
-        }
+        endUSSDsession();
     }
 }
